@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-StudyFlow TDAH v2.0
+StudyFlow TDAH v2.1 - CORREGIDO
 Sistema de estudio neurodivergente de alto rendimiento
-Arquitectura: Modular, async-aware, dopamina-optimizada
+Arquitectura: Modular, async-aware, dopamina-optimizada, THREAD-SAFE
 """
 
 import tkinter as tk
@@ -140,16 +140,17 @@ class TaskEnergyMatcher:
 
 class FocusGuardian:
     """
-    Sistema anti-distracción proactivo
-    Detecta cuando pierdes el foco y te recupera
+    Sistema anti-distracción proactivo - VERSION THREAD-SAFE
+    Usa una cola para comunicarse con el hilo principal de Tkinter
     """
     
-    def __init__(self, callback: Callable):
-        self.callback = callback
+    def __init__(self, message_queue: queue.Queue):
+        self.message_queue = message_queue
         self.check_interval = 30  # segundos
         self.last_interaction = time.time()
         self.is_monitoring = False
         self.distraction_count = 0
+        self._timer = None
         
     def start_monitoring(self):
         self.is_monitoring = True
@@ -170,19 +171,24 @@ class FocusGuardian:
         # Niveles de intervención
         if idle_time > 120:  # 2 minutos sin actividad
             self.distraction_count += 1
-            self.callback('severe', f"¡Distraído por {int(idle_time/60)} min! ¿Volvemos?")
+            # Enviar mensaje a la cola en lugar de llamar directamente
+            self.message_queue.put(('severe', f"¡Distraído por {int(idle_time/60)} min! ¿Volvemos?"))
             self.last_interaction = time.time()  # Reset para no spamear
             
         elif idle_time > 60:  # 1 minuto
             if self.distraction_count == 0:
-                self.callback('mild', "¿Sigues ahí? Un click y volvemos al flow")
+                self.message_queue.put(('mild', "¿Sigues ahí? Un click y volvemos al flow"))
                 
-        # Revisar de nuevo
+        # Programar siguiente revisión
         if self.is_monitoring:
-            threading.Timer(self.check_interval, self._monitor_loop).start()
+            self._timer = threading.Timer(self.check_interval, self._monitor_loop)
+            self._timer.daemon = True
+            self._timer.start()
             
     def stop_monitoring(self):
         self.is_monitoring = False
+        if self._timer:
+            self._timer.cancel()
 
 
 class BodyDoublingRoom:
@@ -224,18 +230,17 @@ class BodyDoublingRoom:
 
 class StudyFlowV2:
     """
-    Aplicación principal v2.0
+    Aplicación principal v2.1 - THREAD SAFE
     Rediseñada desde cero con principios de UX para neurodivergencia
     """
     
     def __init__(self, root):
         self.root = root
-        self.root.title("StudyFlow TDAH v2.0 - Modo Cerebro Galáctico")
+        self.root.title("StudyFlow TDAH v2.1 - Modo Cerebro Galáctico")
         self.root.geometry("1100x800")
         self.root.minsize(1000, 700)
         
         # Paleta de colores científicamente seleccionada para TDAH
-        # Azules y verdes reducen ansiedad, naranjas activan sin sobreestimular
         self.colors = {
             'bg_primary': '#0f172a',      # Azul oscuro profundo (calma)
             'bg_secondary': '#1e293b',     # Slate 800
@@ -253,6 +258,9 @@ class StudyFlowV2:
         self.reward_system = DopamineRewardSystem()
         self.energy_matcher = TaskEnergyMatcher()
         self.body_doubling = BodyDoublingRoom()
+        
+        # Cola para mensajes thread-safe
+        self.msg_queue = queue.Queue()
         self.focus_guardian: Optional[FocusGuardian] = None
         
         # Estado
@@ -265,15 +273,29 @@ class StudyFlowV2:
         # Datos
         self.tasks: List[Dict] = []
         self.sessions_history: List[Dict] = []
-        self.settings = self.load_settings()
         
         self.setup_ui()
         self.apply_theme()
         self.load_data()
         
+        # Iniciar check de cola de mensajes
+        self.check_message_queue()
+        
         # Bindings globales para focus guardian
         self.root.bind_all('<Button-1>', lambda e: self.on_user_activity())
         self.root.bind_all('<Key>', lambda e: self.on_user_activity())
+        
+    def check_message_queue(self):
+        """Revisa la cola de mensajes del Focus Guardian (thread-safe)"""
+        try:
+            while True:
+                level, message = self.msg_queue.get_nowait()
+                self.on_distraction_detected(level, message)
+        except queue.Empty:
+            pass
+        finally:
+            # Revisar cada 100ms
+            self.root.after(100, self.check_message_queue)
         
     def setup_ui(self):
         """Configuración de interfaz con layout optimizado"""
@@ -785,7 +807,7 @@ class StudyFlowV2:
         self.footer_status.pack(side=tk.LEFT, padx=15, pady=10)
         
         self.version_label = tk.Label(footer,
-                                     text="v2.0 • Modo Cerebro Galáctico",
+                                     text="v2.1 • Modo Cerebro Galáctico (Thread-Safe)",
                                      font=('Helvetica Neue', 9),
                                      fg=self.colors['text_muted'],
                                      bg=self.colors['bg_secondary'])
@@ -867,8 +889,8 @@ class StudyFlowV2:
         self.session_start_time = datetime.now()
         self.pause_count = 0
         
-        # Iniciar focus guardian
-        self.focus_guardian = FocusGuardian(self.on_distraction_detected)
+        # Iniciar focus guardian (ahora con cola thread-safe)
+        self.focus_guardian = FocusGuardian(self.msg_queue)
         self.focus_guardian.start_monitoring()
         
         # Estado
@@ -1089,7 +1111,7 @@ class StudyFlowV2:
                  command=popup.destroy).pack(pady=20)
         
     def on_distraction_detected(self, level: str, message: str):
-        """Callback del Focus Guardian"""
+        """Callback del Focus Guardian - AHORA SIEMPRE EN HILO PRINCIPAL"""
         self.status_icon.config(text="⚠️")
         self.status_message.config(text=message, fg=self.colors['accent_urgent'])
         
@@ -1381,7 +1403,7 @@ class StudyFlowV2:
         """Exporta reporte semanal"""
         filename = f"studyflow_report_{datetime.now().strftime('%Y%m%d')}.txt"
         with open(filename, 'w') as f:
-            f.write("STUDYFLOW TDAH v2.0 - REPORTE SEMANAL\n")
+            f.write("STUDYFLOW TDAH v2.1 - REPORTE SEMANAL\n")
             f.write("=" * 50 + "\n\n")
             
             stats = self.reward_system.get_stats()
@@ -1453,10 +1475,6 @@ class StudyFlowV2:
                 
             except Exception as e:
                 print(f"Error cargando: {e}")
-                
-    def load_settings(self) -> dict:
-        """Carga configuración"""
-        return {}
         
     def run(self):
         """Inicia la aplicación"""

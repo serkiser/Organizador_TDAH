@@ -1,0 +1,25 @@
+{
+  "tasks": [],
+  "sessions": [
+    {
+      "timestamp": "2026-02-02T19:23:26.507092",
+      "duration": 15,
+      "task": "General",
+      "pauses": 0,
+      "quality": 1.0,
+      "energy_level": "medium"
+    }
+  ],
+  "reward_stats": {
+    "sessions": 1,
+    "minutes": 15,
+    "best_streak": 1,
+    "achievements": [
+      1
+    ]
+  },
+  "settings": {
+    "energy": "medium"
+  },
+  "last_save": "2026-02-02T19:23:26.575728"
+}
